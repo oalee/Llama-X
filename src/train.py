@@ -11,19 +11,17 @@
 #    WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 #    See the License for the specific language governing permissions and
 #    limitations under the License.
-
+import json
 import copy
 import logging
-import random
 from dataclasses import dataclass, field
 from typing import Optional, Dict, Sequence
 
 import torch
-import torch.distributed
 import transformers
 from torch.utils.data import Dataset
 from transformers import Trainer
-from datasets import load_dataset
+
 import utils
 
 IGNORE_INDEX = -100
@@ -33,14 +31,10 @@ DEFAULT_BOS_TOKEN = "</s>"
 DEFAULT_UNK_TOKEN = "</s>"
 PROMPT_DICT = {
     "prompt_input": (
-        "Below is an instruction that describes a task, paired with an input that provides further context. "
-        "Write a response that appropriately completes the request.\n\n"
-        "### Instruction:\n{instruction}\n\n### Input:\n{input}\n\n### Response:"
+        "{instruction}\n\n### Response:"
     ),
     "prompt_no_input": (
-        "Below is an instruction that describes a task. "
-        "Write a response that appropriately completes the request.\n\n"
-        "### Instruction:\n{instruction}\n\n### Response:"
+        "{instruction}\n\n### Response:"
     ),
 }
 
@@ -53,6 +47,7 @@ class ModelArguments:
 @dataclass
 class DataArguments:
     data_path: str = field(default=None, metadata={"help": "Path to the training data."})
+    complex_data: Optional[str] = field(default=None)
 
 
 @dataclass
@@ -60,7 +55,7 @@ class TrainingArguments(transformers.TrainingArguments):
     cache_dir: Optional[str] = field(default=None)
     optim: str = field(default="adamw_torch")
     model_max_length: int = field(
-        default=512,
+        default=2048,
         metadata={"help": "Maximum sequence length. Sequences will be right padded (and possibly truncated)."},
     )
 
@@ -136,6 +131,75 @@ def preprocess(
     return dict(input_ids=input_ids, labels=labels)
 
 
+class SupervisedDataset(Dataset):
+    """Dataset for supervised fine-tuning."""
+
+    def __init__(self, data_path: str, tokenizer: transformers.PreTrainedTokenizer):
+        super(SupervisedDataset, self).__init__()
+        logging.warning("Loading data...")
+        list_data_dict = utils.jload(data_path)
+
+        logging.warning("Formatting inputs...")
+        prompt_input, prompt_no_input = PROMPT_DICT["prompt_input"], PROMPT_DICT["prompt_no_input"]
+        sources = [
+            prompt_input.format_map(example) if example.get("input", "") != "" else prompt_no_input.format_map(example)
+            for example in list_data_dict
+        ]
+        targets = [f"{example['output']}{tokenizer.eos_token}" for example in list_data_dict]
+
+
+        logging.warning("Tokenizing inputs... This may take some time...")
+        data_dict = preprocess(sources, targets, tokenizer)
+
+        self.input_ids = data_dict["input_ids"]
+        self.labels = data_dict["labels"]
+
+    def __len__(self):
+        return len(self.input_ids)
+
+    def __getitem__(self, i) -> Dict[str, torch.Tensor]:
+        return dict(input_ids=self.input_ids[i], labels=self.labels[i])
+
+class SupervisedComplexDataset(Dataset):
+    """Dataset for supervised fine-tuning."""
+
+    def __init__(self, data_path: str, tokenizer: transformers.PreTrainedTokenizer):
+        super(SupervisedComplexDataset, self).__init__()
+        logging.warning("Loading data...")
+        #list_data_dict = utils.jload(data_path)
+
+        list_data_dict = []
+
+        with open(data_path) as f:
+            for line in f:    
+                cur_obj = json.loads(line)
+                cur_obj = json.loads(cur_obj)
+                list_data_dict.append(cur_obj)
+
+        logging.warning("Formatting inputs...")
+        prompt_input, prompt_no_input = PROMPT_DICT["prompt_input"], PROMPT_DICT["prompt_no_input"]
+        sources = [
+            (example['instruction'].strip() 
+            + ('\n' + example['input'].strip() if 'input' in example and example['input'].strip() != '' else '') 
+            + '\n\n') 
+            for example in list_data_dict
+        ]
+
+        targets = [f"{example['output']}{tokenizer.eos_token}" for example in list_data_dict]
+
+       
+        logging.warning("Tokenizing inputs... This may take some time...")
+        data_dict = preprocess(sources, targets, tokenizer)
+
+        self.input_ids = data_dict["input_ids"]
+        self.labels = data_dict["labels"]
+
+    def __len__(self):
+        return len(self.input_ids)
+
+    def __getitem__(self, i) -> Dict[str, torch.Tensor]:
+        return dict(input_ids=self.input_ids[i], labels=self.labels[i])
+
 @dataclass
 class DataCollatorForSupervisedDataset(object):
     """Collate examples for supervised fine-tuning."""
@@ -144,11 +208,9 @@ class DataCollatorForSupervisedDataset(object):
 
     def __call__(self, instances: Sequence[Dict]) -> Dict[str, torch.Tensor]:
         input_ids, labels = tuple([instance[key] for instance in instances] for key in ("input_ids", "labels"))
-        input_ids = [torch.tensor(x) for x in input_ids]
         input_ids = torch.nn.utils.rnn.pad_sequence(
             input_ids, batch_first=True, padding_value=self.tokenizer.pad_token_id
         )
-        labels = [torch.tensor(x) for x in labels]
         labels = torch.nn.utils.rnn.pad_sequence(labels, batch_first=True, padding_value=IGNORE_INDEX)
         return dict(
             input_ids=input_ids,
@@ -156,23 +218,17 @@ class DataCollatorForSupervisedDataset(object):
             attention_mask=input_ids.ne(self.tokenizer.pad_token_id),
         )
 
-def train_tokenize_function(examples, tokenizer):
-    prompt_input, prompt_no_input = PROMPT_DICT["prompt_input"], PROMPT_DICT["prompt_no_input"]
-    if 'input' in examples:
-        sources = [
-            prompt_input.format_map(dict(instruction=instruction, input=input)) if input != "" \
-            else prompt_no_input.format_map(dict(instruction=instruction)) \
-            for instruction, input in zip(examples['instruction'], examples['input']) 
-        ]
+
+def make_supervised_data_module(tokenizer: transformers.PreTrainedTokenizer, data_args) -> Dict:
+    """Make dataset and collator for supervised fine-tuning."""
+    if data_args.complex_data == 'complex':
+        train_dataset = SupervisedComplexDataset(tokenizer=tokenizer, data_path=data_args.data_path)
     else:
-        sources = [
-            prompt_no_input.format_map(dict(instruction=instruction)) \
-            for instruction in examples['instruction']
-        ]
-    targets = [f"{output}{tokenizer.eos_token}" for output in examples['output']]
-    data_dict = preprocess(sources, targets, tokenizer)
-    return data_dict
-              
+        train_dataset = SupervisedDataset(tokenizer=tokenizer, data_path=data_args.data_path)
+    data_collator = DataCollatorForSupervisedDataset(tokenizer=tokenizer)
+    return dict(train_dataset=train_dataset, eval_dataset=None, data_collator=data_collator)
+
+
 def train():
     parser = transformers.HfArgumentParser((ModelArguments, DataArguments, TrainingArguments))
     model_args, data_args, training_args = parser.parse_args_into_dataclasses()
@@ -187,7 +243,7 @@ def train():
         cache_dir=training_args.cache_dir,
         model_max_length=training_args.model_max_length,
         padding_side="right",
-        use_fast=True,
+        use_fast=False,
     )
     if tokenizer.pad_token is None:
         smart_tokenizer_and_embedding_resize(
@@ -204,32 +260,7 @@ def train():
             }
         )
 
-    raw_train_datasets = load_dataset('json', data_files=data_args.data_path, split="train", cache_dir=training_args.cache_dir)
-    if training_args.local_rank > 0: 
-        torch.distributed.barrier()
-
-    train_dataset = raw_train_datasets.map(
-        train_tokenize_function,
-        batched=True,
-        batch_size=3000,
-        num_proc=32,
-        remove_columns=raw_train_datasets.column_names,
-        load_from_cache_file=True, # not args.overwrite_cache
-        desc="Running tokenizer on train dataset",
-        fn_kwargs={"tokenizer": tokenizer}
-    )
-
-    if training_args.local_rank == 0:
-        torch.distributed.barrier()
-    
-    if training_args.local_rank == 0:
-        print(len(train_dataset))
-        for index in random.sample(range(len(train_dataset)), 3):
-            print(f"Sample {index} of the training set: {train_dataset[index]}.")
-    
-    data_collator = DataCollatorForSupervisedDataset(tokenizer=tokenizer)
-    data_module = dict(train_dataset=train_dataset, eval_dataset=None, data_collator=data_collator)
-
+    data_module = make_supervised_data_module(tokenizer=tokenizer, data_args=data_args)
     #Tell Trainer not to attempt DataParallel
     model.is_parallelizable = True
     model.model_parallel = True

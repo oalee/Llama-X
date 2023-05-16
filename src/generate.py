@@ -116,7 +116,7 @@ def main(
         ],
         title="Llama-X",
         description="Improve LLaMA model to follow instructions.",
-    ).launch(share=True)
+    ).launch(server_name="0.0.0.0", share=False)
 
 
 def generate_prompt(instruction, input=None):
