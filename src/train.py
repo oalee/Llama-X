@@ -212,6 +212,13 @@ class DataCollatorForSupervisedDataset(object):
             input_ids, batch_first=True, padding_value=self.tokenizer.pad_token_id
         )
         labels = torch.nn.utils.rnn.pad_sequence(labels, batch_first=True, padding_value=IGNORE_INDEX)
+        
+        # shuffle data
+        indices = torch.randperm(input_ids.size(0))
+        input_ids = input_ids[indices]
+        labels = labels[indices]
+
+
         return dict(
             input_ids=input_ids,
             labels=labels,
@@ -271,7 +278,9 @@ def train():
 
     trainer.train()
     trainer.save_state()
-    safe_save_model_for_hf_trainer(trainer=trainer, output_dir=training_args.output_dir)
+    trainer.save_model()
+
+    # safe_save_model_for_hf_trainer(trainer=trainer, output_dir=training_args.output_dir)
 
 
 if __name__ == "__main__":
