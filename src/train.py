@@ -213,6 +213,9 @@ class DataCollatorForSupervisedDataset(object):
         )
         labels = torch.nn.utils.rnn.pad_sequence(labels, batch_first=True, padding_value=IGNORE_INDEX)
         
+        # reproduciblity, set seed
+        # torch.manual_seed(42)
+
         # shuffle data
         indices = torch.randperm(input_ids.size(0))
         input_ids = input_ids[indices]
@@ -239,14 +242,19 @@ def make_supervised_data_module(tokenizer: transformers.PreTrainedTokenizer, dat
 def train():
     parser = transformers.HfArgumentParser((ModelArguments, DataArguments, TrainingArguments))
     model_args, data_args, training_args = parser.parse_args_into_dataclasses()
-        
+    
+    # if training_args.resume_from_checkpoint:
+    #     model_path = training_args.resume_from_checkpoint
+    # else:
+    model_path = model_args.model_name_or_path
+
     model = transformers.AutoModelForCausalLM.from_pretrained(
-        model_args.model_name_or_path,
+        model_path,
         cache_dir=training_args.cache_dir,
     )
 
     tokenizer = transformers.AutoTokenizer.from_pretrained(
-        model_args.model_name_or_path,
+        model_path,
         cache_dir=training_args.cache_dir,
         model_max_length=training_args.model_max_length,
         padding_side="right",
@@ -259,14 +267,23 @@ def train():
             model=model,
         )
     if "llama" in model_args.model_name_or_path:
-        tokenizer.add_special_tokens(
-            {
+        print("Checking tokens\n")
+        
+        # Check if special tokens are the default ones
+        if (
+            tokenizer.eos_token != DEFAULT_EOS_TOKEN or
+            tokenizer.bos_token != DEFAULT_BOS_TOKEN or
+            tokenizer.unk_token != DEFAULT_UNK_TOKEN or
+            tokenizer.pad_token != DEFAULT_PAD_TOKEN
+        ):
+            print("Fixing tokens\n")
+            tokenizer.add_special_tokens({
                 "eos_token": DEFAULT_EOS_TOKEN,
                 "bos_token": DEFAULT_BOS_TOKEN,
                 "unk_token": DEFAULT_UNK_TOKEN,
                 "pad_token": DEFAULT_PAD_TOKEN
-            }
-        )
+            })
+    
 
     data_module = make_supervised_data_module(tokenizer=tokenizer, data_args=data_args)
     #Tell Trainer not to attempt DataParallel
@@ -276,7 +293,11 @@ def train():
     trainer = Trainer(model=model, tokenizer=tokenizer, args=training_args, **data_module)
     model.config.use_cache = False
 
-    trainer.train()
+    if training_args.resume_from_checkpoint:
+        trainer.train(resume_from_checkpoint=True)
+    else:
+        trainer.train()
+
     trainer.save_state()
     trainer.save_model()
 
