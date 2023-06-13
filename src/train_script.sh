@@ -1,10 +1,10 @@
-deepspeed  --include localhost:1,2,6,7 train.py \                                                        
+deepspeed --include localhost:0 train.py \
     --model_name_or_path '/data/weights/wllama' \
-    --data_path /data/datasets/fa.json \
-    --output_dir /data/weights/pwizard \
-    --num_train_epochs 1 \
-    --model_max_length 2048 \
-    --per_device_train_batch_size 4 \
+    --data_path '/data/datasets/ptc/instruction_set.json' \
+    --output_dir '/data/weights/latestptc' \
+    --num_train_epochs 2 \
+    --model_max_length 1548 \
+    --per_device_train_batch_size 10 \
     --per_device_eval_batch_size 1 \
     --gradient_accumulation_steps 1 \
     --evaluation_strategy "no" \
@@ -12,7 +12,7 @@ deepspeed  --include localhost:1,2,6,7 train.py \
     --save_steps 100 \
     --save_total_limit 6 \
     --learning_rate 2e-5 \
-    --warmup_steps 2 \
+    --warmup_steps 0 \
     --logging_steps 2 \
     --lr_scheduler_type "cosine" \
     --report_to "wandb" \

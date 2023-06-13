@@ -14,6 +14,7 @@
 import json
 import copy
 import logging
+import os
 from dataclasses import dataclass, field
 from typing import Optional, Dict, Sequence
 
@@ -72,7 +73,8 @@ def safe_save_model_for_hf_trainer(trainer: transformers.Trainer, output_dir: st
     """Collects the state dict and dump to disk."""
     state_dict = trainer.model.state_dict()
     if trainer.args.should_save:
-        cpu_state_dict = {key: value.cpu() for key, value in state_dict.items()}
+        cpu_state_dict = {key: value.cpu()
+                          for key, value in state_dict.items()}
         del state_dict
         trainer._save(output_dir, state_dict=cpu_state_dict)  # noqa
 
@@ -118,7 +120,8 @@ def _tokenize_fn(
         )
         for text in strings
     ]
-    input_ids = labels = [tokenized.input_ids[0] for tokenized in tokenized_list]
+    input_ids = labels = [tokenized.input_ids[0]
+                          for tokenized in tokenized_list]
     input_ids_lens = labels_lens = [
         tokenized.input_ids.ne(tokenizer.pad_token_id).sum().item()
         for tokenized in tokenized_list
@@ -294,10 +297,18 @@ def train():
     # if training_args.resume_from_checkpoint:
     #     model_path = training_args.resume_from_checkpoint
     # else:
+    device_map = "auto"
+    world_size = int(os.environ.get("WORLD_SIZE", 1))
+    print("World size ", world_size)
+    ddp = world_size != 1
+    if ddp:
+        device_map = {"": int(os.environ.get("LOCAL_RANK") or 0)}
+
     model_path = model_args.model_name_or_path
 
     model = transformers.AutoModelForCausalLM.from_pretrained(
-        model_path, cache_dir=training_args.cache_dir, load_in_8bit=True
+        model_path, cache_dir=training_args.cache_dir, load_in_8bit=True,
+        device_map=device_map
     )
 
     model = prepare_model_for_int8_training(model)
@@ -345,7 +356,8 @@ def train():
                 }
             )
 
-    data_module = make_supervised_data_module(tokenizer=tokenizer, data_args=data_args)
+    data_module = make_supervised_data_module(
+        tokenizer=tokenizer, data_args=data_args)
     # Tell Trainer not to attempt DataParallel
     model.is_parallelizable = True
     model.model_parallel = True
@@ -367,4 +379,6 @@ def train():
 
 
 if __name__ == "__main__":
-    train()
+    
+    with torch.autocast("cuda"):
+        train()
