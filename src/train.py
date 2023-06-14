@@ -31,10 +31,10 @@ DEFAULT_BOS_TOKEN = "</s>"
 DEFAULT_UNK_TOKEN = "</s>"
 PROMPT_DICT = {
     "prompt_input": (
-        "{instruction}\n\n### Response:"
+        "### Instruction:\n{instruction}\n\n### Input:\n{input}\n\n### Response:\n"
     ),
     "prompt_no_input": (
-        "{instruction}\n\n### Response:"
+        "### Instruction:\n{instruction}\n\n### Response:\n"
     ),
 }
 

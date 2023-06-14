@@ -1,7 +1,7 @@
 deepspeed --include localhost:0 train.py \
     --model_name_or_path '/data/weights/wllama' \
-    --data_path '/data/datasets/ptc/instruction_set.json' \
-    --output_dir '/data/weights/latestptc' \
+    --data_path '/data/datasets/ptc/instruction_setz.json' \
+    --output_dir '/data/weights/ltptc' \
     --num_train_epochs 2 \
     --model_max_length 1548 \
     --per_device_train_batch_size 10 \
