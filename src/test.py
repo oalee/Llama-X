@@ -148,7 +148,7 @@ def main(
         #     break
 
         instruction = row["instruction"]
-        input = row["input"]
+        input = row["text"]
 
         print("Instruction:", instruction)
         print("Input:", input)
@@ -161,7 +161,7 @@ def main(
         print("Response:", evaluate(instruction, input), top_p=1.0)
         print()
 
-        
+
     gr.Interface(
         fn=evaluate,
         inputs=[
