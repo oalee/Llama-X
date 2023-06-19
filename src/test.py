@@ -57,7 +57,6 @@ def main(
             base_model, device_map={"": device}, low_cpu_mem_usage=True
         )
 
-
     # unwind broken decapoda-research config
     model.config.pad_token_id = tokenizer.pad_token_id = 0  # unk
     model.config.bos_token_id = 1
@@ -109,16 +108,12 @@ def main(
                 kwargs.setdefault(
                     "stopping_criteria", transformers.StoppingCriteriaList()
                 )
-                kwargs["stopping_criteria"].append(
-                    Stream(callback_func=callback)
-                )
+                kwargs["stopping_criteria"].append(Stream(callback_func=callback))
                 with torch.no_grad():
                     model.generate(**kwargs)
 
             def generate_with_streaming(**kwargs):
-                return Iteratorize(
-                    generate_with_callback, kwargs, callback=None
-                )
+                return Iteratorize(generate_with_callback, kwargs, callback=None)
 
             with generate_with_streaming(**generate_params) as generator:
                 for output in generator:
@@ -144,6 +139,29 @@ def main(
         output = tokenizer.decode(s)
         yield prompter.get_response(output)
 
+    file = json.load(open(test_file, "r"))
+
+    responses = []
+
+    for i, row in enumerate(file):
+        # if i > 100:
+        #     break
+
+        instruction = row["instruction"]
+        input = row["input"]
+
+        print("Instruction:", instruction)
+        print("Input:", input)
+
+        response = evaluate(instruction, input, top_p=1.0)
+        print("Response:", response)
+        # parse json
+        responses.append({"item": row, "response": json.loads(response)})
+
+        print("Response:", evaluate(instruction, input), top_p=1.0)
+        print()
+
+        
     gr.Interface(
         fn=evaluate,
         inputs=[
@@ -153,18 +171,12 @@ def main(
                 placeholder="Tell me about alpacas.",
             ),
             gr.components.Textbox(lines=2, label="Input", placeholder="none"),
-            gr.components.Slider(
-                minimum=0, maximum=1, value=0.1, label="Temperature"
-            ),
-            gr.components.Slider(
-                minimum=0, maximum=1, value=0.75, label="Top p"
-            ),
+            gr.components.Slider(minimum=0, maximum=1, value=0.1, label="Temperature"),
+            gr.components.Slider(minimum=0, maximum=1, value=0.75, label="Top p"),
             gr.components.Slider(
                 minimum=0, maximum=100, step=1, value=40, label="Top k"
             ),
-            gr.components.Slider(
-                minimum=1, maximum=4, step=1, value=4, label="Beams"
-            ),
+            gr.components.Slider(minimum=1, maximum=4, step=1, value=4, label="Beams"),
             gr.components.Slider(
                 minimum=1, maximum=2000, step=1, value=128, label="Max tokens"
             ),
@@ -198,21 +210,6 @@ def main(
         print("Response:", evaluate(instruction))
         print()
     """
-
-    file = json.load(open(test_file, "r"))
-
-    for i, row in enumerate(file):
-
-        if i > 100:
-            break
-
-        instruction = row["instruction"]
-        input = row["input"]
-        print("Instruction:", instruction)
-        print("Input:", input)
-        print("Response:", evaluate(instruction, input))
-        print()
-
 
 
 if __name__ == "__main__":
