@@ -27,8 +27,10 @@ def main(
     load_8bit: bool = False,
     base_model: str = "",
     test_file: str = "",
-    prompt_template: str = "",  # The prompt template to use, will default to alpaca.
-    server_name: str = "0.0.0.0",  # Allows to listen on all interfaces by providing '0.
+    # The prompt template to use, will default to alpaca.
+    prompt_template: str = "",
+    # Allows to listen on all interfaces by providing '0.
+    server_name: str = "0.0.0.0",
     share_gradio: bool = False,
 ):
     base_model = base_model or os.environ.get("BASE_MODEL", "")
@@ -108,7 +110,8 @@ def main(
                 kwargs.setdefault(
                     "stopping_criteria", transformers.StoppingCriteriaList()
                 )
-                kwargs["stopping_criteria"].append(Stream(callback_func=callback))
+                kwargs["stopping_criteria"].append(
+                    Stream(callback_func=callback))
                 with torch.no_grad():
                     model.generate(**kwargs)
 
@@ -147,20 +150,47 @@ def main(
         # if i > 100:
         #     break
 
-        instruction = row["instruction"]
+        instruction = row["instruction_only_labels"]
         input = row["text"]
 
         print("Instruction:", instruction)
         print("Input:", input)
 
         response = evaluate(instruction, input, top_p=1.0)
+        # import ipdb
+        # ipdb.set_trace()
+        response = next(response)
         print("Response:", response)
+        # remove eos </s> from response
+        #
+        response = response.replace("</s>", "")
         # parse json
-        responses.append({"item": row, "response": json.loads(response)})
+        try:
+            responses.append({"item": row, "response": json.loads(response)})
 
-        print("Response:", evaluate(instruction, input), top_p=1.0)
+        except:
+            # submit another
+            response = evaluate(instruction,  input=input,
+                                temperature=0.001, top_p=0.9)
+
+            response = next(response).replace('</s>', "")
+
+            responses.append(
+                {
+                    {"item": row, "response": json.loads(response)}
+                }
+            )
         print()
 
+    # save json
+    try:
+        json.dumps(
+            responses,
+            "./test_labels.json"
+        )
+    except:
+        import ipdb
+        ipdb.set_trace()
 
     gr.Interface(
         fn=evaluate,
@@ -171,12 +201,15 @@ def main(
                 placeholder="Tell me about alpacas.",
             ),
             gr.components.Textbox(lines=2, label="Input", placeholder="none"),
-            gr.components.Slider(minimum=0, maximum=1, value=0.1, label="Temperature"),
-            gr.components.Slider(minimum=0, maximum=1, value=0.75, label="Top p"),
+            gr.components.Slider(minimum=0, maximum=1,
+                                 value=0.1, label="Temperature"),
+            gr.components.Slider(minimum=0, maximum=1,
+                                 value=0.75, label="Top p"),
             gr.components.Slider(
                 minimum=0, maximum=100, step=1, value=40, label="Top k"
             ),
-            gr.components.Slider(minimum=1, maximum=4, step=1, value=4, label="Beams"),
+            gr.components.Slider(minimum=1, maximum=4,
+                                 step=1, value=4, label="Beams"),
             gr.components.Slider(
                 minimum=1, maximum=2000, step=1, value=128, label="Max tokens"
             ),
